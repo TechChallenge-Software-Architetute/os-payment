@@ -16,6 +16,20 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <aws.sdk.version>2.29.52</aws.sdk.version>
+        <jacoco.version>0.8.14</jacoco.version>
+        <!--
+            os-management usa 0.90. Aqui começa em 0.00 porque este repositório
+            ainda não tem testes: com 0.90 o `mvn verify` falharia no primeiro
+            build, e o gate seria removido em vez de cumprido. Suba este valor
+            junto com as regras de negócio — é a única mudança necessária para
+            ativar o gate.
+        -->
+        <jacoco.min.coverage>0.00</jacoco.min.coverage>
+        <sonar.maven.plugin.version>5.5.0.6356</sonar.maven.plugin.version>
+        <sonar.projectKey>os-payment</sonar.projectKey>
+        <sonar.projectName>os-payment</sonar.projectName>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+        <sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
         <jackson.version>2.18.2</jackson.version>
         <junit.version>5.11.4</junit.version>
         <mockito.version>5.15.2</mockito.version>
@@ -90,6 +104,58 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
             </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.min.coverage}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+                Configurado igual ao os-management, e igualmente NÃO executado pela
+                pipeline: o job code-analysis roda `mvn verify -DskipTests`, que só
+                gera o relatório JaCoCo. Nenhum `sonar:sonar`, nenhum SONAR_TOKEN.
+                Ver a pendência no HANDOFF.md.
+            -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>${sonar.maven.plugin.version}</version>
+            </plugin>
             <!-- Builds the fat jar Lambda expects (all deps bundled) -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -109,4 +175,21 @@
             </plugin>
         </plugins>
     </build>
+    <!--
+        TODO: descomentar quando o código de negócio estiver implementado e houver
+        consumidor para o artefato Maven. Hoje o jar é um artefato de deploy — o
+        Terraform o envia direto para a Lambda (filename + source_code_hash) —, e
+        publicar 16 MB no GitHub Packages a cada push só consome a cota de
+        storage. Para ativar: descomente este bloco e o job `publish` em
+        .github/workflows/pipeline.yml.
+
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/TechChallenge-Software-Architetute/os-payment</url>
+        </repository>
+    </distributionManagement>
+    -->
+
 </project>
