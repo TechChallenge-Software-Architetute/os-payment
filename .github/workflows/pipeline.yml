@@ -1,0 +1,287 @@
+name: "os-payment pipeline"
+
+# Independent by design: no step reads another repository's Terraform state and no
+# step waits on another repository's deploy. Every input is an explicit secret or
+# a name derived from the branch.
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+
+  unit-test:
+    name: "Unit tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: "21"
+          cache: maven
+
+      - name: Run tests
+        run: ./mvnw -B test
+
+  code-analysis:
+    name: "Code analysis"
+    runs-on: ubuntu-latest
+    needs: unit-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: "21"
+          cache: maven
+
+      # Same shape as os-management's code-analysis job, with one fix: os-management
+      # runs `verify -DskipTests`, which produces no jacoco.exec, so its report and
+      # coverage gate are both silently skipped. Running `verify` without the flag
+      # makes the report and the gate real. Costs a second test run; worth it over a
+      # job that checks nothing.
+      #
+      # This still does NOT run a Sonar scan — os-management doesn't either, despite
+      # having the plugin configured. See the pending item in HANDOFF.md.
+      - name: Generate JaCoCo report and run coverage gate
+        run: ./mvnw -B verify
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # TODO: descomentar quando o código de negócio estiver implementado e houver
+  # consumidor para o artefato Maven.
+  #
+  # Hoje o jar é artefato de deploy: o Terraform o envia direto para a Lambda
+  # (filename + source_code_hash), e o shaded jar tem ~16 MB — publicar isso no
+  # GitHub Packages a cada push para develop só consome a cota de storage. O job
+  # abaixo é idêntico ao `publish` do os-management, incluindo o bump de versão.
+  #
+  # Para ativar:
+  #   1. descomente este job;
+  #   2. descomente o <distributionManagement> no pom.xml;
+  #   3. troque `needs: code-analysis` por `needs: publish` no job `deploy`, se
+  #      quiser garantir que o pacote seja publicado antes do apply.
+  #
+  # publish:
+  #   name: "Publish to GitHub Packages"
+  #   runs-on: ubuntu-latest
+  #   needs: code-analysis
+  #   # Só em develop/main — evita acumular versões a cada push de feature branch.
+  #   if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+  #   outputs:
+  #     publish_version: ${{ steps.publish-version.outputs.publish_version }}
+  #   permissions:
+  #     contents: write
+  #     packages: write
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+  #
+  #     - name: Set up JDK 21
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: corretto
+  #         java-version: "21"
+  #         cache: maven
+  #
+  #     - name: Incrementar versão no pom.xml
+  #       if: github.ref == 'refs/heads/develop'
+  #       run: |
+  #         ./mvnw build-helper:parse-version versions:set \
+  #           -DnewVersion=\${parsedVersion.majorVersion}.\${parsedVersion.minorVersion}.\${parsedVersion.nextIncrementalVersion} \
+  #           -DgenerateBackupPoms=false
+  #
+  #     - name: Preparar versao unica para publicacao
+  #       id: publish-version
+  #       run: |
+  #         RELEASE_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+  #         PUBLISH_VERSION="${RELEASE_VERSION}-build.${{ github.run_id }}.${{ github.run_attempt }}"
+  #         ./mvnw versions:set -DnewVersion="$PUBLISH_VERSION" -DgenerateBackupPoms=false
+  #         echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+  #         echo "publish_version=$PUBLISH_VERSION" >> "$GITHUB_OUTPUT"
+  #
+  #     - name: Publicar pacote
+  #       run: ./mvnw --batch-mode deploy -DskipTests --settings settings.xml
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #
+  #     - name: Restaurar versao limpa no pom.xml
+  #       run: |
+  #         ./mvnw versions:set \
+  #           -DnewVersion="${{ steps.publish-version.outputs.release_version }}" \
+  #           -DgenerateBackupPoms=false
+  #
+  #     - name: Fazer commit e enviar atualização de versão
+  #       if: github.ref == 'refs/heads/develop'
+  #       run: |
+  #         git config --global user.name "github-actions[bot]"
+  #         git config --global user.email "github-actions[bot]@users.noreply.github.com"
+  #         git add pom.xml
+  #         git commit -m "Bump versão para próximo build [skip ci]"
+  #         for attempt in 1 2 3; do
+  #           git pull --rebase --autostash origin "${{ github.ref_name }}" \
+  #             && git push origin HEAD:"${{ github.ref_name }}" && break
+  #           echo "push attempt ${attempt} failed; retrying in 5s..."
+  #           sleep 5
+  #         done
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  preflight:
+    name: "Terraform preflight"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.base.ref == 'develop') ||
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/develop')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.0"
+
+      - name: Terraform fmt & init (no backend)
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+
+      - name: Terraform validate (placeholders)
+        run: |
+          cat > ci-placeholder.auto.tfvars <<EOF
+          environment = "develop"
+          EOF
+          terraform validate
+
+  # ---------------------------------------------------------------------------
+  # Build + deploy. The jar is built in this job because the Lambda resource
+  # reads it from disk (filename + source_code_hash), the same way
+  # os-management-lambda does it.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: "Build & Terraform deploy"
+    runs-on: ubuntu-latest
+    needs: code-analysis
+    environment: ${{ github.ref_name }}
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    env:
+      TF_VAR_environment: ${{ github.ref_name }}
+      TF_VAR_aws_account_id: ${{ github.ref_name == 'main' && secrets.AWS_ACCOUNT_ID_MAIN || secrets.AWS_ACCOUNT_ID_DEVELOP }}
+      TF_STATE_BUCKET: ${{ github.ref_name == 'main' && secrets.TF_STATE_BUCKET_MAIN || secrets.TF_STATE_BUCKET_DEVELOP }}
+      AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      TF_VAR_region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: "21"
+          cache: maven
+
+      - name: Package Lambda jar
+        run: ./mvnw -B -DskipTests clean package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ github.ref_name == 'main' && secrets.AWS_ACCESS_KEY_ID_MAIN || secrets.AWS_ACCESS_KEY_ID_DEVELOP }}
+          aws-secret-access-key: ${{ github.ref_name == 'main' && secrets.AWS_SECRET_ACCESS_KEY_MAIN || secrets.AWS_SECRET_ACCESS_KEY_DEVELOP }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.0"
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        shell: bash
+        run: |
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "::error::TF_STATE_BUCKET_${{ github.ref_name == 'main' && 'MAIN' || 'DEVELOP' }} is not configured."
+            exit 1
+          fi
+
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=os-payment/${{ github.ref_name }}/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="use_lockfile=true"
+
+      - name: Import existing AWS resources when state is empty
+        working-directory: infra/terraform
+        shell: bash
+        run: |
+          import_if_missing() {
+            local address="$1"
+            local resource_id="$2"
+
+            if ! terraform state show "$address" >/dev/null 2>&1; then
+              terraform import -input=false "$address" "$resource_id"
+            fi
+          }
+
+          env_name="${{ github.ref_name }}"
+
+          for pair in \
+            "aws_sqs_queue.payment_requests_dlq:os-payment-${env_name}-payment-requests-dlq" \
+            "aws_sqs_queue.payment_requests:os-payment-${env_name}-payment-requests"
+          do
+            address="${pair%%:*}"
+            queue_name="${pair#*:}"
+            queue_url=$(aws sqs get-queue-url --queue-name "$queue_name" --query 'QueueUrl' --output text 2>/dev/null || true)
+            if [ -n "$queue_url" ] && [ "$queue_url" != "None" ]; then
+              import_if_missing "$address" "$queue_url"
+            fi
+          done
+
+          table_name="os-payment-${env_name}-payments"
+          table_exists=$(aws dynamodb describe-table --table-name "$table_name" \
+            --query 'Table.TableName' --output text 2>/dev/null || true)
+          if [ -n "$table_exists" ] && [ "$table_exists" != "None" ]; then
+            import_if_missing "aws_dynamodb_table.payments" "$table_name"
+          fi
+
+      - name: Terraform plan (save tfplan)
+        working-directory: infra/terraform
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/terraform/tfplan
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: terraform apply -input=false -auto-approve tfplan
