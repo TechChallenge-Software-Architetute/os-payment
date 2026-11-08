@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: os-payment
+  main:
+    web-application-type: none
+  cloud:
+    aws:
+      region:
+        static: ${AWS_REGION:us-east-1}
+      credentials:
+        use-default-aws-credentials-chain: true
+      sqs:
+        endpoint: ${SQS_ENDPOINT:}
+app:
+  dynamodb:
+    payment-orders-table: ${DYNAMODB_PAYMENT_ORDERS_TABLE:payment_orders}
+  sqs:
+    input-queue: ${SQS_INPUT_QUEUE:sqs-os-management}
+    output-queue: ${SQS_OUTPUT_QUEUE:sqs-payment}
+  payment:
+    polling:
+      fixed-delay-ms: ${PAYMENT_POLLING_FIXED_DELAY_MS:30000}
+      batch-size: ${PAYMENT_POLLING_BATCH_SIZE:50}
+mercadopago:
+  access-token: ${MERCADO_PAGO_ACCESS_TOKEN:}
+  api-url: ${MERCADO_PAGO_API_URL:https://api.mercadopago.com}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+logging:
+  level:
+    com.os.payment: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [orderId:%X{orderId:-}] %logger{36} - %msg%n"

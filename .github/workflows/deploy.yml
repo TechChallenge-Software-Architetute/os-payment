@@ -1,0 +1,77 @@
+name: build-and-deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: os-payment
+  ECS_CLUSTER: os-payment
+  ECS_SERVICE: os-payment
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: mvn -B verify
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - name: Initialize Terraform and create ECR repository
+        working-directory: terraform
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+        run: |
+          terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="key=os-payment/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="dynamodb_table=$TF_LOCK_TABLE" -backend-config="encrypt=true"
+          terraform apply -target=aws_ecr_repository.app -auto-approve
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$SHA" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$SHA"
+      - name: Terraform apply
+        working-directory: terraform
+        env:
+          TF_VAR_image_tag: ${{ github.sha }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+        run: |
+          terraform apply -auto-approve
+      - name: Register task definition with Mercado Pago token and deploy
+        env:
+          MERCADO_PAGO_ACCESS_TOKEN: ${{ secrets.MERCADO_PAGO_ACCESS_TOKEN }}
+        run: |
+          test -n "$MERCADO_PAGO_ACCESS_TOKEN"
+          echo "::add-mask::$MERCADO_PAGO_ACCESS_TOKEN"
+          aws ecs describe-task-definition --task-definition "$ECS_SERVICE" --query taskDefinition --output json \
+            | jq --arg token "$MERCADO_PAGO_ACCESS_TOKEN" '
+                del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+                | .containerDefinitions |= map(
+                    if .name == "os-payment" then
+                      .environment = ((.environment // [] | map(select(.name != "MERCADO_PAGO_ACCESS_TOKEN"))) + [{name: "MERCADO_PAGO_ACCESS_TOKEN", value: $token}])
+                    else . end
+                  )
+              ' > "$RUNNER_TEMP/os-payment-task-definition.json"
+          TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "file://$RUNNER_TEMP/os-payment-task-definition.json" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION_ARN" --force-new-deployment
