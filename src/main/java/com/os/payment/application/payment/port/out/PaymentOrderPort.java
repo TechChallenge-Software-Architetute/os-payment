@@ -5,7 +5,7 @@ import java.util.Optional;
 import com.os.payment.domain.PaymentOrder;
 
 public interface PaymentOrderPort {
-    Optional<PaymentOrder> findByOrderId(String orderId);
+    Optional<PaymentOrder> findByOrder(String order);
     List<PaymentOrder> findPendingOrders(int limit);
     PaymentOrder save(PaymentOrder order);
     boolean saveIfPending(PaymentOrder order);

@@ -2,7 +2,7 @@
 Funcionalidade: Geração do checkout para um pedido
   Cenário: Publicar checkout criado pelo Mercado Pago
     Dado que não existe pagamento para o pedido "order-123"
-    E o pedido tem email "cliente@example.com", total "125.50" e moeda "BRL"
+    E o pedido tem total "125.50"
     E o Mercado Pago cria o checkout "https://mp.example/checkout/abc" com identificador "pref-abc"
     Quando o pedido é processado
     Então a ordem deve ser salva com status "ORDER_GENERATED"
@@ -16,8 +16,8 @@ Funcionalidade: Geração do checkout para um pedido
 
   Cenário: Registrar e publicar erro ao falhar na criação do checkout
     Dado que não existe pagamento para o pedido "order-123"
-    E o pedido tem email "cliente@example.com", total "125.50" e moeda "BRL"
+    E o pedido tem total "125.50"
     E o Mercado Pago falha ao criar o checkout
     Quando o pedido é processado
-    Então a ordem deve ser salva com status "ORDER_PAYMENT_ERROR"
+    Então a ordem deve ser salva com status "NEGAR_SERVICO"
     E um erro de pagamento deve ser publicado

@@ -12,6 +12,7 @@ import com.os.payment.domain.PaymentStatus;
 
 @Service
 public class GeneratePaymentUseCase {
+    private static final String CURRENCY = "BRL";
     private static final Logger log = LoggerFactory.getLogger(GeneratePaymentUseCase.class);
     private final PaymentOrderPort orders;
     private final PaymentProviderPort provider;
@@ -22,18 +23,18 @@ public class GeneratePaymentUseCase {
     }
 
     public void execute(PaymentOrderRequest request) {
-        if (request.orderId() == null || request.orderId().isBlank()) {
-            log.warn("Ignoring payment request without orderId");
-            throw new IllegalArgumentException("orderId is required");
+        if (request.order() == null || request.order().isBlank()) {
+            log.warn("Ignoring payment request without order");
+            throw new IllegalArgumentException("order is required");
         }
         log.info("Starting payment generation");
-        var previous = orders.findByOrderId(request.orderId());
-        if (previous.isPresent() && previous.get().status() != PaymentStatus.ORDER_PAYMENT_ERROR) {
+        var previous = orders.findByOrder(request.order());
+        if (previous.isPresent() && previous.get().status() != PaymentStatus.NEGAR_SERVICO) {
             log.info("Skipping duplicate payment request; existing status={}", previous.get().status());
             return;
         }
         Instant now = Instant.now();
-        PaymentOrder order = new PaymentOrder(request.orderId(), request.customerEmail(), request.amount(), request.currency(),
+        PaymentOrder order = new PaymentOrder(request.order(), request.correlationId(), request.amount(), CURRENCY,
                 PaymentStatus.ORDER_GENERATED, null, null, null, null,
                 previous.map(PaymentOrder::createdAt).orElse(now), now);
         orders.save(order);
@@ -46,7 +47,7 @@ public class GeneratePaymentUseCase {
         } catch (Exception e) {
             log.error("Unable to create Mercado Pago preference; errorType={}", e.getClass().getSimpleName());
             String message = e.getMessage() == null ? "Payment provider request failed" : e.getMessage().substring(0, Math.min(500, e.getMessage().length()));
-            order = order.withPayment(PaymentStatus.ORDER_PAYMENT_ERROR, null, null, "PAYMENT_PROVIDER_ERROR", message, Instant.now());
+            order = order.withPayment(PaymentStatus.NEGAR_SERVICO, null, null, "PAYMENT_PROVIDER_ERROR", message, Instant.now());
         }
         orders.save(order);
         log.info("Payment order persisted with status={}", order.status());

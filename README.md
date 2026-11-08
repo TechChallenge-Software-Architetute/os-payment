@@ -21,11 +21,11 @@ Os cenários Gherkin em português ficam em `src/test/resources/features` e são
 
 ## Mensagens
 
-Entrada JSON: `orderId`, `customerEmail`, `amount` e `currency`. O serviço não recebe nem persiste descrição, quantidade ou detalhes dos produtos. O adaptador envia ao Mercado Pago uma linha técnica única (`Pedido <orderId>`, quantidade 1) com o valor total da ordem, pois a API de preferências exige `items`. Use `orderId` como identificador estável para deduplicação. Saída contém `orderId`, `status`, `amount`, `currency`, `paymentId`, `checkoutUrl`, `errorCode`, `errorMessage` e `occurredAt`.
+Entrada JSON: `order`, `amount` e `correlationId` (opcional). Se ausente, o serviço gera um UUID. O `correlationId` acompanha os logs, a persistência no DynamoDB e a mensagem de saída. O serviço não recebe email, descrição, quantidade ou detalhes dos produtos; a moeda é definida internamente como `BRL`. O adaptador envia ao Mercado Pago uma linha técnica única (`Pedido <order>`, quantidade 1) com o valor total da ordem, pois a API de preferências exige `items`. Use `order` como identificador estável para deduplicação. Saída contém `order`, `correlationId`, `action`, `amount`, `currency` (sempre `BRL`), `paymentId`, `checkoutUrl`, `errorCode`, `errorMessage` e `occurredAt`.
 
-Estados: `ORDER_GENERATED` (checkout criado ou pagamento ainda pendente), `ORDER_PAID` (pagamento aprovado e validado) e `ORDER_PAYMENT_ERROR` (falha ao gerar checkout, pagamento recusado ou inconsistência de valor/moeda). O estado gerado não significa que o pagamento foi confirmado. O polling interno pesquisa pagamentos no Mercado Pago pela `external_reference` igual ao `orderId`; quando encontra um resultado final, persiste e publica a mudança de estado. O token do provedor não deve ser exposto ao `os-management`.
+Valores de `action`: `ORDER_GENERATED` (checkout criado ou pagamento ainda pendente), `EXECUTAR_SERVICO` (pagamento aprovado e validado) e `NEGAR_SERVICO` (falha ao gerar checkout, pagamento recusado ou inconsistência de valor/moeda). `ORDER_GENERATED` não significa que o pagamento foi confirmado. O polling interno pesquisa pagamentos no Mercado Pago pela `external_reference` igual ao `order`; quando encontra um resultado final, persiste e publica a mudança de ação. O token do provedor não deve ser exposto ao `os-management`.
 
-Tabela `os-payment-orders` usa `orderId` como chave de partição e mantém os dados do pedido, estado do pagamento, identificador externo e URL do checkout. A tabela é criada pelo Terraform; o Compose cria uma tabela local equivalente no LocalStack.
+Tabela `os-payment-orders` usa `order` como chave de partição e mantém os dados do pedido, estado do pagamento, identificador externo e URL do checkout. A tabela é criada pelo Terraform; o Compose cria uma tabela local equivalente no LocalStack.
 
 ## Execução local
 
@@ -42,7 +42,9 @@ Variáveis locais:
 
 Ao executar a aplicação fora do Compose, configure `AWS_REGION`, `SQS_ENDPOINT`, `DYNAMODB_ENDPOINT`, `DYNAMODB_PAYMENT_ORDERS_TABLE`, `SQS_INPUT_QUEUE` e `SQS_OUTPUT_QUEUE`. O polling usa `PAYMENT_POLLING_FIXED_DELAY_MS` (30.000 ms por padrão) e `PAYMENT_POLLING_BATCH_SIZE` (50 por padrão). Para LocalStack, use `http://localhost:4566` nos endpoints e credenciais de desenvolvimento `AWS_ACCESS_KEY_ID=test` e `AWS_SECRET_ACCESS_KEY=test`.
 
-Pedidos em `ORDER_GENERATED` são consultados pelo índice DynamoDB `status-updatedAt-index`. O polling pesquisa pagamentos atualizados nos últimos 364 dias. Pagamentos sem resultado ou ainda pendentes permanecem em `ORDER_GENERATED`; pagamentos recusados/cancelados viram `ORDER_PAYMENT_ERROR`. A gravação condicional evita que múltiplas tasks publiquem uma transição final duplicada.
+Pedidos em `ORDER_GENERATED` são consultados pelo índice DynamoDB `action-updatedAt-index`. O polling pesquisa pagamentos atualizados nos últimos 364 dias. Pagamentos sem resultado ou ainda pendentes permanecem em `ORDER_GENERATED`; pagamentos recusados/cancelados viram `NEGAR_SERVICO`. A gravação condicional evita que múltiplas tasks publiquem uma transição final duplicada.
+
+> A alteração da chave DynamoDB de `orderId` para `order` exige migração ou recriação da tabela existente, pois o DynamoDB não permite alterar a chave primária de uma tabela criada. Faça backup dos dados antes de aplicar a mudança em ambientes com dados existentes. Para desenvolvimento local, recrie a tabela `payment_orders` no LocalStack.
 
 ## AWS e GitHub Actions
 

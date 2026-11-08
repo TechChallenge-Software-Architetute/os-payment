@@ -4,8 +4,8 @@ Funcionalidade: Polling de pagamentos pendentes
     Dado que existe checkout gerado para o pedido "order-123"
     E o Mercado Pago retorna o pagamento "mp-789" com status "approved", valor "125.50" e moeda "BRL"
     Quando os pagamentos pendentes são consultados
-    Então a ordem deve ser salva com status "ORDER_PAID"
-    E o status "ORDER_PAID" deve ser publicado
+    Então a ordem deve ser salva com status "EXECUTAR_SERVICO"
+    E o status "EXECUTAR_SERVICO" deve ser publicado
 
   Cenário: Manter aguardando quando o pagamento ainda está pendente
     Dado que existe checkout gerado para o pedido "order-123"
@@ -18,12 +18,12 @@ Funcionalidade: Polling de pagamentos pendentes
     Dado que existe checkout gerado para o pedido "order-123"
     E o Mercado Pago retorna o pagamento "mp-789" com status "rejected", valor "125.50" e moeda "BRL"
     Quando os pagamentos pendentes são consultados
-    Então a ordem deve ser salva com status "ORDER_PAYMENT_ERROR"
-    E o status "ORDER_PAYMENT_ERROR" deve ser publicado
+    Então a ordem deve ser salva com status "NEGAR_SERVICO"
+    E o status "NEGAR_SERVICO" deve ser publicado
 
   Cenário: Não aprovar pagamento com valor divergente
     Dado que existe checkout gerado para o pedido "order-123"
     E o Mercado Pago retorna o pagamento "mp-789" com status "approved", valor "120.00" e moeda "BRL"
     Quando os pagamentos pendentes são consultados
-    Então a ordem deve ser salva com status "ORDER_PAYMENT_ERROR"
-    E o status "ORDER_PAYMENT_ERROR" deve ser publicado
+    Então a ordem deve ser salva com status "NEGAR_SERVICO"
+    E o status "NEGAR_SERVICO" deve ser publicado

@@ -9,12 +9,14 @@ import com.os.payment.domain.PaymentOrder;
 
 @Mapper(componentModel = "spring")
 public interface PaymentOrderMapper {
+    @Mapping(target = "status", source = "action")
     @Mapping(target = "createdAt", source = "createdAt", qualifiedByName = "toInstant")
     @Mapping(target = "updatedAt", source = "updatedAt", qualifiedByName = "toInstant")
     PaymentOrder toDomain(PaymentOrderDocument document);
 
     @Mapping(target = "createdAt", source = "createdAt", qualifiedByName = "toString")
     @Mapping(target = "updatedAt", source = "updatedAt", qualifiedByName = "toString")
+    @Mapping(target = "action", source = "status")
     PaymentOrderDocument toDocument(PaymentOrder order);
 
     @Named("toInstant")

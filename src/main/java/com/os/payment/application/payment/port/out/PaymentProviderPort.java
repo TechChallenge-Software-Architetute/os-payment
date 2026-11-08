@@ -6,7 +6,7 @@ import com.os.payment.application.payment.PaymentOrderRequest;
 
 public interface PaymentProviderPort {
     Preference createPreference(PaymentOrderRequest order);
-    List<PaymentSearchResult> searchPayments(String orderId);
+    List<PaymentSearchResult> searchPayments(String order);
 
     record Preference(String id, String checkoutUrl) {}
     record PaymentSearchResult(String paymentId, String externalReference, BigDecimal amount,

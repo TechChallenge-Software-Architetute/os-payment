@@ -22,7 +22,7 @@ public class PaymentStatusSqsPublisher implements PaymentStatusPublisherPort {
     @Override
     public void publish(PaymentOrder order) {
         log.debug("Publishing payment status to SQS queue {}", outputQueue);
-        sqs.send(to -> to.queue(outputQueue).payload(new PaymentStatusMessage(order.orderId(), order.status(), order.amount(),
+        sqs.send(to -> to.queue(outputQueue).payload(new PaymentStatusMessage(order.order(), order.correlationId(), order.status(), order.amount(),
                 order.currency(), order.providerPaymentId(), order.checkoutUrl(), order.errorCode(), order.errorMessage(), Instant.now())));
         log.info("Payment status sent to SQS queue {}; status={}", outputQueue, order.status());
     }

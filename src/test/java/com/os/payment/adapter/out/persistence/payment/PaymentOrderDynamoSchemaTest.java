@@ -12,20 +12,18 @@ class PaymentOrderDynamoSchemaTest {
     void mapsPaymentOrderDocumentToDynamoDbAttributesAndBack() {
         var schema = TableSchema.fromBean(PaymentOrderDocument.class);
         var document = new PaymentOrderDocument();
-        document.setOrderId("order-123");
-        document.setCustomerEmail("customer@example.com");
+        document.setOrder("order-123");
         document.setAmount(new BigDecimal("125.50"));
         document.setCurrency("BRL");
-        document.setStatus("ORDER_GENERATED");
+        document.setAction("ORDER_GENERATED");
 
         var attributes = schema.itemToMap(document, true);
         var restored = schema.mapToItem(attributes);
 
-        assertEquals("order-123", attributes.get("orderId").s());
-        assertEquals("customer@example.com", restored.getCustomerEmail());
+        assertEquals("order-123", attributes.get("order").s());
         assertEquals(0, new BigDecimal("125.50").compareTo(restored.getAmount()));
         assertEquals("BRL", restored.getCurrency());
-        assertEquals("ORDER_GENERATED", restored.getStatus());
+        assertEquals("ORDER_GENERATED", restored.getAction());
         assertNull(restored.getCreatedAt());
     }
 }

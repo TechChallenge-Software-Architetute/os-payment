@@ -40,15 +40,15 @@ resource "aws_sqs_queue" "output" {
 resource "aws_dynamodb_table" "payment_orders" {
   name         = "${var.app_name}-orders"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "orderId"
+  hash_key     = "order"
 
   attribute {
-    name = "orderId"
+    name = "order"
     type = "S"
   }
 
   attribute {
-    name = "status"
+    name = "action"
     type = "S"
   }
 
@@ -58,8 +58,8 @@ resource "aws_dynamodb_table" "payment_orders" {
   }
 
   global_secondary_index {
-    name            = "status-updatedAt-index"
-    hash_key        = "status"
+    name            = "action-updatedAt-index"
+    hash_key        = "action"
     range_key       = "updatedAt"
     projection_type = "ALL"
   }

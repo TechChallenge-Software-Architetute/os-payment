@@ -28,9 +28,9 @@ public class PaymentOrderPersistenceAdapter implements PaymentOrderPort {
     }
 
     @Override
-    public Optional<PaymentOrder> findByOrderId(String orderId) {
+    public Optional<PaymentOrder> findByOrder(String order) {
         log.debug("Loading payment order from DynamoDB");
-        PaymentOrderDocument document = table.getItem(Key.builder().partitionValue(orderId).build());
+        PaymentOrderDocument document = table.getItem(Key.builder().partitionValue(order).build());
         log.debug("Payment order lookup completed; found={}", document != null);
         return Optional.ofNullable(document).map(mapper::toDomain);
     }
@@ -38,7 +38,7 @@ public class PaymentOrderPersistenceAdapter implements PaymentOrderPort {
     @Override
     public List<PaymentOrder> findPendingOrders(int limit) {
         log.debug("Loading up to {} pending orders from DynamoDB", limit);
-        DynamoDbIndex<PaymentOrderDocument> pendingIndex = table.index("status-updatedAt-index");
+        DynamoDbIndex<PaymentOrderDocument> pendingIndex = table.index("action-updatedAt-index");
         return pendingIndex
                 .query(request -> request.queryConditional(QueryConditional.keyEqualTo(
                         Key.builder().partitionValue("ORDER_GENERATED").build())).limit(limit))
@@ -59,8 +59,8 @@ public class PaymentOrderPersistenceAdapter implements PaymentOrderPort {
     @Override
     public boolean saveIfPending(PaymentOrder order) {
         var condition = Expression.builder()
-                .expression("#status = :pending")
-                .putExpressionName("#status", "status")
+                .expression("#action = :pending")
+                .putExpressionName("#action", "action")
                 .putExpressionValue(":pending", AttributeValue.builder().s("ORDER_GENERATED").build())
                 .build();
         try {

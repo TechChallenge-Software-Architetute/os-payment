@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import com.os.payment.application.payment.port.out.PaymentOrderPort;
@@ -36,10 +37,15 @@ public class PollPendingPaymentsUseCase {
 
         log.info("Polling Mercado Pago for {} pending payment(s)", pending.size());
         for (PaymentOrder order : pending) {
+            MDC.put("correlationId", order.correlationId() == null ? "-" : order.correlationId());
+            MDC.put("order", order.order());
             try {
                 poll(order);
             } catch (RuntimeException e) {
-                log.error("Payment polling failed; orderId={}, errorType={}", order.orderId(), e.getClass().getSimpleName());
+                log.error("Payment polling failed; order={}, errorType={}", order.order(), e.getClass().getSimpleName());
+            } finally {
+                MDC.remove("correlationId");
+                MDC.remove("order");
             }
         }
     }
@@ -47,12 +53,12 @@ public class PollPendingPaymentsUseCase {
     private void poll(PaymentOrder order) {
         boolean finalStateObserved = false;
         try {
-            List<PaymentSearchResult> results = provider.searchPayments(order.orderId()).stream()
-                    .filter(payment -> order.orderId().equals(payment.externalReference()))
+            List<PaymentSearchResult> results = provider.searchPayments(order.order()).stream()
+                    .filter(payment -> order.order().equals(payment.externalReference()))
                     .toList();
 
             if (results.isEmpty()) {
-                log.debug("Mercado Pago has no payment for order yet; orderId={}", order.orderId());
+                log.debug("Mercado Pago has no payment for order yet; order={}", order.order());
                 return;
             }
 
@@ -66,11 +72,11 @@ public class PollPendingPaymentsUseCase {
                         && order.amount().compareTo(approved.amount()) == 0;
                 boolean currencyMatches = order.currency() == null || order.currency().equalsIgnoreCase(approved.currency());
                 if (amountMatches && currencyMatches) {
-                    transition(order, approved, PaymentStatus.ORDER_PAID, null, null);
+                    transition(order, approved, PaymentStatus.EXECUTAR_SERVICO, null, null);
                 } else {
-                    log.error("Approved Mercado Pago payment does not match order amount or currency; orderId={}, paymentId={}",
-                            order.orderId(), approved.paymentId());
-                    transition(order, approved, PaymentStatus.ORDER_PAYMENT_ERROR,
+                    log.error("Approved Mercado Pago payment does not match order amount or currency; order={}, paymentId={}",
+                            order.order(), approved.paymentId());
+                    transition(order, approved, PaymentStatus.NEGAR_SERVICO,
                             "PAYMENT_AMOUNT_OR_CURRENCY_MISMATCH", "Approved payment amount or currency does not match order");
                 }
                 finalStateObserved = true;
@@ -80,19 +86,19 @@ public class PollPendingPaymentsUseCase {
             boolean stillProcessing = results.stream().anyMatch(payment ->
                     "pending".equalsIgnoreCase(payment.status()) || "in_process".equalsIgnoreCase(payment.status()));
             if (stillProcessing) {
-                log.debug("Mercado Pago payment is still pending; orderId={}", order.orderId());
+                log.debug("Mercado Pago payment is still pending; order={}", order.order());
                 return;
             }
 
             PaymentSearchResult latest = results.getFirst();
             if ("rejected".equalsIgnoreCase(latest.status()) || "cancelled".equalsIgnoreCase(latest.status())) {
-                transition(order, latest, PaymentStatus.ORDER_PAYMENT_ERROR, "PAYMENT_NOT_APPROVED",
+                transition(order, latest, PaymentStatus.NEGAR_SERVICO, "PAYMENT_NOT_APPROVED",
                         "Provider status: " + latest.status());
                 finalStateObserved = true;
                 return;
             }
 
-            log.debug("Mercado Pago payment has non-final status {}; orderId={}", latest.status(), order.orderId());
+            log.debug("Mercado Pago payment has non-final status {}; order={}", latest.status(), order.order());
         } finally {
             if (!finalStateObserved) {
                 PaymentOrder rescheduled = order.withPayment(PaymentStatus.ORDER_GENERATED, order.providerPaymentId(),
@@ -108,8 +114,8 @@ public class PollPendingPaymentsUseCase {
                 errorCode, errorMessage, Instant.now());
         if (!orders.saveIfPending(updated)) return;
 
-        log.info("Payment status changed from polling; orderId={}, paymentId={}, status={}",
-                order.orderId(), payment.paymentId(), status);
+        log.info("Payment status changed from polling; order={}, paymentId={}, status={}",
+                order.order(), payment.paymentId(), status);
         publisher.publish(updated);
     }
 }

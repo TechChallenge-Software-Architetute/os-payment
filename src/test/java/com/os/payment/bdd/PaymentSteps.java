@@ -31,7 +31,7 @@ public class PaymentSteps {
     private GeneratePaymentUseCase generatePayment;
     private PollPendingPaymentsUseCase pollPendingPayments;
     private PaymentOrderRequest request;
-    private String orderId;
+    private String order;
 
     @Before
     public void setUp() {
@@ -44,12 +44,12 @@ public class PaymentSteps {
 
     @Given("que não existe pagamento para o pedido {string}")
     public void noPaymentExists(String id) {
-        orderId = id;
+        order = id;
     }
 
-    @Given("o pedido tem email {string}, total {string} e moeda {string}")
-    public void orderDetails(String email, String amount, String currency) {
-        request = new PaymentOrderRequest(orderId, email, new BigDecimal(amount), currency);
+    @Given("o pedido tem total {string}")
+    public void orderDetails(String amount) {
+        request = new PaymentOrderRequest(order, new BigDecimal(amount), "correlation-test-123");
     }
 
     @Given("o Mercado Pago cria o checkout {string} com identificador {string}")
@@ -59,7 +59,7 @@ public class PaymentSteps {
 
     @Given("que já existe pagamento gerado para o pedido {string}")
     public void paymentAlreadyGenerated(String id) {
-        orderId = id;
+        order = id;
         orders.seed(order(id, PaymentStatus.ORDER_GENERATED));
     }
 
@@ -70,13 +70,13 @@ public class PaymentSteps {
 
     @Given("que existe checkout gerado para o pedido {string}")
     public void generatedCheckoutExists(String id) {
-        orderId = id;
+        order = id;
         orders.seed(order(id, PaymentStatus.ORDER_GENERATED));
     }
 
     @Given("o Mercado Pago retorna o pagamento {string} com status {string}, valor {string} e moeda {string}")
     public void mercadoPagoReturnsPayment(String paymentId, String status, String amount, String currency) {
-        provider.payments = List.of(new PaymentProviderPort.PaymentSearchResult(paymentId, orderId,
+        provider.payments = List.of(new PaymentProviderPort.PaymentSearchResult(paymentId, order,
                 new BigDecimal(amount), currency, status));
     }
 
@@ -85,7 +85,7 @@ public class PaymentSteps {
 
     @When("o pedido é processado novamente")
     public void processOrderAgain() {
-        generatePayment.execute(new PaymentOrderRequest(orderId, "cliente@example.com", new BigDecimal("125.50"), "BRL"));
+        generatePayment.execute(new PaymentOrderRequest(order, new BigDecimal("125.50"), "correlation-test-123"));
     }
 
     @When("os pagamentos pendentes são consultados")
@@ -99,14 +99,14 @@ public class PaymentSteps {
 
     @Then("a ordem deve permanecer com status {string}")
     public void orderShouldRemainWithStatus(String expected) {
-        assertEquals(PaymentStatus.valueOf(expected), orders.findByOrderId(orderId).orElseThrow().status());
+        assertEquals(PaymentStatus.valueOf(expected), orders.findByOrder(order).orElseThrow().status());
     }
 
     @Then("o checkout {string} deve ser publicado para a ordem")
     public void checkoutShouldBePublished(String url) {
         assertEquals(1, publisher.publishedOrders.size());
         PaymentOrder published = publisher.publishedOrders.getFirst();
-        assertEquals(orderId, published.orderId());
+        assertEquals(order, published.order());
         assertEquals(url, published.checkoutUrl());
     }
 
@@ -121,7 +121,7 @@ public class PaymentSteps {
 
     @Then("um erro de pagamento deve ser publicado")
     public void paymentErrorShouldBePublished() {
-        assertEquals(PaymentStatus.ORDER_PAYMENT_ERROR, publisher.publishedOrders.getFirst().status());
+        assertEquals(PaymentStatus.NEGAR_SERVICO, publisher.publishedOrders.getFirst().status());
         assertNotNull(publisher.publishedOrders.getFirst().errorCode());
     }
 
@@ -132,35 +132,35 @@ public class PaymentSteps {
 
     private PaymentOrder order(String id, PaymentStatus status) {
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
-        return new PaymentOrder(id, "cliente@example.com", new BigDecimal("125.50"), "BRL", status,
+        return new PaymentOrder(id, "correlation-test-123", new BigDecimal("125.50"), "BRL", status,
                 "pref-abc", "https://mp.example/checkout/abc", null, null, now, now);
     }
 
     private static class InMemoryOrders implements PaymentOrderPort {
-        private final Map<String, PaymentOrder> byOrderId = new HashMap<>();
+        private final Map<String, PaymentOrder> byOrder = new HashMap<>();
         private final List<PaymentOrder> savedOrders = new ArrayList<>();
 
-        private void seed(PaymentOrder order) { byOrderId.put(order.orderId(), order); }
+        private void seed(PaymentOrder order) { byOrder.put(order.order(), order); }
 
         @Override
-        public Optional<PaymentOrder> findByOrderId(String id) { return Optional.ofNullable(byOrderId.get(id)); }
+        public Optional<PaymentOrder> findByOrder(String id) { return Optional.ofNullable(byOrder.get(id)); }
 
         @Override
         public List<PaymentOrder> findPendingOrders(int limit) {
-            return byOrderId.values().stream().filter(order -> order.status() == PaymentStatus.ORDER_GENERATED)
+            return byOrder.values().stream().filter(order -> order.status() == PaymentStatus.ORDER_GENERATED)
                     .limit(limit).toList();
         }
 
         @Override
         public PaymentOrder save(PaymentOrder order) {
-            byOrderId.put(order.orderId(), order);
+            byOrder.put(order.order(), order);
             savedOrders.add(order);
             return order;
         }
 
         @Override
         public boolean saveIfPending(PaymentOrder order) {
-            PaymentOrder existing = byOrderId.get(order.orderId());
+            PaymentOrder existing = byOrder.get(order.order());
             if (existing == null || existing.status() != PaymentStatus.ORDER_GENERATED) return false;
             save(order);
             return true;
