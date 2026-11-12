@@ -50,3 +50,8 @@ override.tf.json
 *_override.tf.json
 # Saved plans.
 tfplan
+
+# IntelliJ
+.idea/
+*.iml
+target/
