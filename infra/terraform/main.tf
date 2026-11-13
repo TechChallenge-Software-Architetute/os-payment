@@ -1,54 +1,78 @@
-# os-payment owns its inbound queue, its payments table, and the Lambda that
-# joins the two. It never references another repo's Terraform state and never
-# creates a resource inside another repo's stack, so this deploy runs in any
-# order — including first, on an empty account.
-#
-# The event source mapping below targets *this* repository's queue, which is why
-# it does not introduce a cross-repo dependency. A mapping onto someone else's
-# queue would, and is not allowed here.
-
-locals {
-  queue_name    = "os-payment-${var.environment}-payment-requests"
-  dlq_name      = "os-payment-${var.environment}-payment-requests-dlq"
-  table_name    = "os-payment-${var.environment}-payments"
-  function_name = "os-payment-${var.environment}-payment-handler"
-
-  # Visibility must exceed the function timeout, or SQS redelivers a message that
-  # is still being processed. Six times is the AWS-recommended ratio.
-  queue_visibility_timeout_seconds = var.lambda_timeout_seconds * 6
+data "aws_vpc" "default" {
+  default = true
 }
 
-# --- Inbound queue + DLQ -----------------------------------------------------
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
 
-resource "aws_sqs_queue" "payment_requests_dlq" {
+locals {
+  app_name          = "${var.app_name}-${var.environment}"
+  input_queue_name  = "${local.app_name}-payment-requests"
+  dlq_name          = "${local.input_queue_name}-dlq"
+  output_queue_name = "${local.app_name}-payment-status"
+  table_name        = "${local.app_name}-payment-orders"
+  log_group_name    = "/ecs/${local.app_name}"
+}
+
+# Keep the queues already applied by the previous Terraform version instead of
+# replacing them when their resource labels are aligned with the worker code.
+moved {
+  from = aws_sqs_queue.payment_requests
+  to   = aws_sqs_queue.input
+}
+
+moved {
+  from = aws_sqs_queue.payment_requests_dlq
+  to   = aws_sqs_queue.input_dlq
+}
+
+data "aws_iam_policy_document" "ecs_tasks_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+# --- SQS ---------------------------------------------------------------------
+
+resource "aws_sqs_queue" "input_dlq" {
   name                      = local.dlq_name
   message_retention_seconds = var.dlq_message_retention_seconds
   sqs_managed_sse_enabled   = true
 }
 
-resource "aws_sqs_queue" "payment_requests" {
-  name                       = local.queue_name
-  visibility_timeout_seconds = local.queue_visibility_timeout_seconds
+resource "aws_sqs_queue" "input" {
+  name                       = local.input_queue_name
+  visibility_timeout_seconds = var.queue_visibility_timeout_seconds
   message_retention_seconds  = var.queue_message_retention_seconds
-  sqs_managed_sse_enabled    = true
   receive_wait_time_seconds  = 20
-
+  sqs_managed_sse_enabled    = true
   redrive_policy = jsonencode({
-    deadLetterTargetArn = aws_sqs_queue.payment_requests_dlq.arn
+    deadLetterTargetArn = aws_sqs_queue.input_dlq.arn
     maxReceiveCount     = var.queue_max_receive_count
   })
 }
 
-# Resource policy only for cross-account producers; see producer_role_arns.
-data "aws_iam_policy_document" "payment_requests" {
+resource "aws_sqs_queue" "output" {
+  name                    = local.output_queue_name
+  sqs_managed_sse_enabled = true
+}
+
+data "aws_iam_policy_document" "input_queue" {
   count = length(var.producer_role_arns) > 0 ? 1 : 0
 
   statement {
     sid       = "AllowNamedProducersToSend"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.payment_requests.arn]
-
+    resources = [aws_sqs_queue.input.arn]
     principals {
       type        = "AWS"
       identifiers = var.producer_role_arns
@@ -59,13 +83,11 @@ data "aws_iam_policy_document" "payment_requests" {
     sid       = "DenyInsecureTransport"
     effect    = "Deny"
     actions   = ["sqs:*"]
-    resources = [aws_sqs_queue.payment_requests.arn]
-
+    resources = [aws_sqs_queue.input.arn]
     principals {
       type        = "AWS"
       identifiers = ["*"]
     }
-
     condition {
       test     = "Bool"
       variable = "aws:SecureTransport"
@@ -75,40 +97,41 @@ data "aws_iam_policy_document" "payment_requests" {
 }
 
 resource "aws_sqs_queue_policy" "payment_requests" {
-  count = length(var.producer_role_arns) > 0 ? 1 : 0
-
-  queue_url = aws_sqs_queue.payment_requests.id
-  policy    = data.aws_iam_policy_document.payment_requests[0].json
+  count     = length(var.producer_role_arns) > 0 ? 1 : 0
+  queue_url = aws_sqs_queue.input.id
+  policy    = data.aws_iam_policy_document.input_queue[0].json
 }
 
-# --- Payments table ----------------------------------------------------------
+# --- DynamoDB ---------------------------------------------------------------
 
-resource "aws_dynamodb_table" "payments" {
+resource "aws_dynamodb_table" "payment_orders" {
   name         = local.table_name
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "paymentId"
+  hash_key     = "order"
 
   attribute {
-    name = "paymentId"
+    name = "order"
+    type = "S"
+  }
+  attribute {
+    name = "action"
+    type = "S"
+  }
+  attribute {
+    name = "updatedAt"
     type = "S"
   }
 
-  attribute {
-    name = "orderId"
-    type = "S"
-  }
-
-  # The saga looks payments up by order, not by payment id.
   global_secondary_index {
-    name            = "orderId-index"
-    hash_key        = "orderId"
+    name            = "action-updatedAt-index"
+    hash_key        = "action"
+    range_key       = "updatedAt"
     projection_type = "ALL"
   }
 
   point_in_time_recovery {
     enabled = var.enable_point_in_time_recovery
   }
-
   server_side_encryption {
     enabled = true
   }
@@ -118,90 +141,148 @@ resource "aws_dynamodb_table" "payments" {
   }
 }
 
-# --- Lambda ------------------------------------------------------------------
+# --- ECR and ECS Fargate worker ---------------------------------------------
 
-data "aws_iam_policy_document" "lambda_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
+resource "aws_ecr_repository" "app" {
+  name                 = local.app_name
+  image_tag_mutability = "IMMUTABLE"
+  image_scanning_configuration {
+    scan_on_push = true
   }
 }
 
-resource "aws_iam_role" "payment_handler" {
-  name               = "${local.function_name}-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+resource "aws_ecs_cluster" "app" {
+  name = local.app_name
 }
 
-resource "aws_iam_role_policy_attachment" "payment_handler_basic" {
-  role       = aws_iam_role.payment_handler.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+resource "aws_cloudwatch_log_group" "app" {
+  name              = local.log_group_name
+  retention_in_days = var.log_retention_days
 }
 
-# Least privilege: only this queue, only this table, and only the actions the
-# handler actually performs. No VPC attachment — the function talks to SQS and
-# DynamoDB over the AWS API and needs no private network access.
-data "aws_iam_policy_document" "payment_handler" {
+resource "aws_iam_role" "execution" {
+  name               = "${local.app_name}-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "execution" {
+  role       = aws_iam_role.execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role" "task" {
+  name               = "${local.app_name}-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+data "aws_iam_policy_document" "task" {
   statement {
-    sid = "ConsumeOwnQueue"
+    sid = "ConsumeInputQueue"
     actions = [
       "sqs:ReceiveMessage",
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
+      "sqs:GetQueueUrl",
+      "sqs:ChangeMessageVisibility",
     ]
-    resources = [aws_sqs_queue.payment_requests.arn]
+    resources = [aws_sqs_queue.input.arn]
   }
 
   statement {
-    sid       = "WritePayments"
-    actions   = ["dynamodb:PutItem"]
-    resources = [aws_dynamodb_table.payments.arn]
+    sid       = "PublishOutputQueue"
+    actions   = ["sqs:SendMessage", "sqs:GetQueueUrl"]
+    resources = [aws_sqs_queue.output.arn]
+  }
+
+  statement {
+    sid = "ReadAndUpdatePaymentOrders"
+    actions = [
+      "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:UpdateItem",
+    ]
+    resources = [
+      aws_dynamodb_table.payment_orders.arn,
+      "${aws_dynamodb_table.payment_orders.arn}/index/*",
+    ]
   }
 }
 
-resource "aws_iam_role_policy" "payment_handler" {
-  name   = "payment-handler"
-  role   = aws_iam_role.payment_handler.id
-  policy = data.aws_iam_policy_document.payment_handler.json
+resource "aws_iam_role_policy" "task" {
+  name   = "${local.app_name}-worker"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task.json
 }
 
-# Created explicitly so retention is bounded; otherwise Lambda creates it with
-# retention set to "never expire".
-resource "aws_cloudwatch_log_group" "payment_handler" {
-  name              = "/aws/lambda/${local.function_name}"
-  retention_in_days = var.log_retention_days
+resource "aws_security_group" "tasks" {
+  name        = "${local.app_name}-tasks"
+  description = "Outbound access for the os-payment worker"
+  vpc_id      = data.aws_vpc.default.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
-resource "aws_lambda_function" "payment_handler" {
-  function_name    = local.function_name
-  role             = aws_iam_role.payment_handler.arn
-  runtime          = var.lambda_runtime
-  handler          = "com.os.payment.PaymentRequestHandler::handleRequest"
-  filename         = var.lambda_jar_path
-  source_code_hash = filebase64sha256(var.lambda_jar_path)
-  memory_size      = var.lambda_memory_mb
-  timeout          = var.lambda_timeout_seconds
+resource "aws_ecs_task_definition" "app" {
+  family                   = local.app_name
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = tostring(var.task_cpu)
+  memory                   = tostring(var.task_memory)
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
 
-  environment {
-    variables = {
-      PAYMENTS_TABLE = aws_dynamodb_table.payments.name
+  container_definitions = jsonencode([{
+    name      = var.app_name
+    image     = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
+    essential = true
+    environment = [
+      { name = "AWS_REGION", value = var.region },
+      { name = "SQS_INPUT_QUEUE", value = aws_sqs_queue.input.name },
+      { name = "SQS_OUTPUT_QUEUE", value = aws_sqs_queue.output.name },
+      { name = "DYNAMODB_PAYMENT_ORDERS_TABLE", value = aws_dynamodb_table.payment_orders.name },
+      { name = "PAYMENT_POLLING_FIXED_DELAY_MS", value = tostring(var.payment_polling_fixed_delay_ms) },
+      { name = "PAYMENT_POLLING_BATCH_SIZE", value = tostring(var.payment_polling_batch_size) },
+      { name = "MERCADO_PAGO_API_URL", value = var.mercado_pago_api_url },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.app.name
+        "awslogs-region"        = var.region
+        "awslogs-stream-prefix" = "worker"
+      }
     }
+  }])
+}
+
+resource "aws_ecs_service" "app" {
+  name            = local.app_name
+  cluster         = aws_ecs_cluster.app.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = var.desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = data.aws_subnets.default.ids
+    security_groups  = [aws_security_group.tasks.id]
+    assign_public_ip = true
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.payment_handler_basic,
-    aws_cloudwatch_log_group.payment_handler,
+    aws_iam_role_policy_attachment.execution,
+    aws_iam_role_policy.task,
   ]
-}
 
-resource "aws_lambda_event_source_mapping" "payment_requests" {
-  event_source_arn = aws_sqs_queue.payment_requests.arn
-  function_name    = aws_lambda_function.payment_handler.arn
-  batch_size       = var.lambda_batch_size
-
-  # The handler returns per-message failures, so a single bad message does not
-  # redrive the whole batch.
-  function_response_types = ["ReportBatchItemFailures"]
+  # The workflow registers a task-definition revision with the Mercado Pago
+  # token from GitHub Secrets. Do not have Terraform revert that revision.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
