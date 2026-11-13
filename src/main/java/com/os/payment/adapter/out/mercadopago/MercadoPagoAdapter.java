@@ -1,21 +1,20 @@
 package com.os.payment.adapter.out.mercadopago;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import com.os.payment.application.payment.PaymentOrderRequest;
+import com.os.payment.application.payment.port.out.PaymentProviderPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.web.client.RestClientResponseException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import com.os.payment.application.payment.PaymentOrderRequest;
-import com.os.payment.application.payment.port.out.PaymentProviderPort;
-import com.os.payment.application.payment.port.out.PaymentProviderPort.Preference;
-import com.os.payment.application.payment.port.out.PaymentProviderPort.PaymentSearchResult;
+import org.springframework.web.client.RestClientResponseException;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 @Component
 public class MercadoPagoAdapter implements PaymentProviderPort {

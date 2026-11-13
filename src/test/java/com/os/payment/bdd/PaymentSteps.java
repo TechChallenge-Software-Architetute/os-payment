@@ -1,19 +1,8 @@
 package com.os.payment.bdd;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import com.os.payment.application.payment.GeneratePaymentUseCase;
-import com.os.payment.application.payment.PollPendingPaymentsUseCase;
 import com.os.payment.application.payment.PaymentOrderRequest;
+import com.os.payment.application.payment.PollPendingPaymentsUseCase;
 import com.os.payment.application.payment.port.out.PaymentOrderPort;
 import com.os.payment.application.payment.port.out.PaymentProviderPort;
 import com.os.payment.application.payment.port.out.PaymentStatusPublisherPort;
@@ -23,6 +12,12 @@ import io.cucumber.java.Before;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 public class PaymentSteps {
     private InMemoryOrders orders;

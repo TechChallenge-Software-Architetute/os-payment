@@ -1,8 +1,9 @@
 package com.os.payment.application.payment.port.out;
 
+import com.os.payment.domain.PaymentOrder;
+
 import java.util.List;
 import java.util.Optional;
-import com.os.payment.domain.PaymentOrder;
 
 public interface PaymentOrderPort {
     Optional<PaymentOrder> findByOrder(String order);

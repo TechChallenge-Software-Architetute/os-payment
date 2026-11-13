@@ -4,13 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <!--
-        POM recomposto depois do merge da develop (55a2b86), que tinha ficado só
-        com o POM da Lambda e removido as dependências do Spring/MapStruct/Cucumber
-        da implementação do pagamento. Base: POM do Kelvin (4c081c3).
-        Da develop entram: dependências da Lambda (para PaymentRequestHandler e
-        PaymentRepository compilarem), JaCoCo e Sonar.
-    -->
+    <!-- Worker Spring Boot empacotado e executado como container ECS Fargate. -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -76,18 +70,6 @@
             <groupId>org.mapstruct</groupId>
             <artifactId>mapstruct</artifactId>
             <version>${mapstruct.version}</version>
-        </dependency>
-
-        <!-- Da develop: runtime da Lambda (PaymentRequestHandler). -->
-        <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-lambda-java-core</artifactId>
-            <version>1.2.3</version>
-        </dependency>
-        <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-lambda-java-events</artifactId>
-            <version>3.14.0</version>
         </dependency>
 
         <dependency>

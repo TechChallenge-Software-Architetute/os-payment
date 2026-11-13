@@ -1,14 +1,15 @@
 package com.os.payment.adapter.in.sqs;
 
+import com.os.payment.application.payment.GeneratePaymentUseCase;
+import com.os.payment.application.payment.PaymentOrderRequest;
+import io.awspring.cloud.sqs.annotation.SqsListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.messaging.Message;
 import org.springframework.stereotype.Component;
+
 import java.util.UUID;
-import io.awspring.cloud.sqs.annotation.SqsListener;
-import com.os.payment.application.payment.GeneratePaymentUseCase;
-import com.os.payment.application.payment.PaymentOrderRequest;
 
 @Component
 public class OrderConsumer {

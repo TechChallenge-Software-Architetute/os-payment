@@ -1,8 +1,9 @@
 package com.os.payment.application.payment.port.out;
 
+import com.os.payment.application.payment.PaymentOrderRequest;
+
 import java.math.BigDecimal;
 import java.util.List;
-import com.os.payment.application.payment.PaymentOrderRequest;
 
 public interface PaymentProviderPort {
     Preference createPreference(PaymentOrderRequest order);

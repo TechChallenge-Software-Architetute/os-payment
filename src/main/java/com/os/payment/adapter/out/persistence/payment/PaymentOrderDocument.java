@@ -1,10 +1,11 @@
 package com.os.payment.adapter.out.persistence.payment;
 
-import java.math.BigDecimal;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSecondaryPartitionKey;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSecondarySortKey;
+
+import java.math.BigDecimal;
 
 @DynamoDbBean
 public class PaymentOrderDocument {

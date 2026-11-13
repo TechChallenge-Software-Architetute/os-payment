@@ -1,8 +1,8 @@
 package com.os.payment.adapter.in.schedule;
 
+import com.os.payment.application.payment.PollPendingPaymentsUseCase;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import com.os.payment.application.payment.PollPendingPaymentsUseCase;
 
 @Component
 public class PaymentPollingScheduler {
