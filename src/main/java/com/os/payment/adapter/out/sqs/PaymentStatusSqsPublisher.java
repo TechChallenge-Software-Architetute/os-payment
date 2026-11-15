@@ -24,7 +24,7 @@ public class PaymentStatusSqsPublisher implements PaymentStatusPublisherPort {
         log.debug("Publishing payment status to SQS queue {}", outputQueue);
         String action = switch (order.status()) {
             case ORDER_GENERATED -> "GERAR_ORCAMENTO";
-            case EXECUTAR_SERVICO -> "EXECUTAR_SERVICO";
+            case EXECUTAR_SERVICO -> "PAGAMENTO_APROVADO";
             case NEGAR_SERVICO -> "NEGAR_SERVICO";
         };
         sqs.send(outputQueue, MessageBuilder.withPayload(order.order())
