@@ -32,6 +32,9 @@ public class GeneratePaymentUseCase {
         var previous = orders.findByOrder(request.order());
         if (previous.isPresent() && previous.get().status() != PaymentStatus.NEGAR_SERVICO) {
             log.info("Skipping duplicate payment request; existing status={}", previous.get().status());
+            if (previous.get().checkoutUrl() != null && !previous.get().checkoutUrl().isBlank()) {
+                log.info("Mercado Pago checkout URL: {}", previous.get().checkoutUrl());
+            }
             return;
         }
         Instant now = Instant.now();
@@ -45,6 +48,7 @@ public class GeneratePaymentUseCase {
             var preference = provider.createPreference(request);
             order = order.withPayment(PaymentStatus.ORDER_GENERATED, preference.id(), preference.checkoutUrl(), null, null, Instant.now());
             log.info("Checkout preference created; paymentId={}", preference.id());
+            log.info("Mercado Pago checkout URL: {}", preference.checkoutUrl());
         } catch (Exception e) {
             log.error("Unable to create Mercado Pago preference; errorType={}", e.getClass().getSimpleName());
             String message = e.getMessage() == null ? "Payment provider request failed" : e.getMessage().substring(0, Math.min(500, e.getMessage().length()));

@@ -2,7 +2,7 @@ spring:
   cloud:
     aws:
       region:
-        static: eu-west-3
+        static: ${AWS_REGION:eu-west-3}
       credentials:
         access-key: test
         secret-key: test
