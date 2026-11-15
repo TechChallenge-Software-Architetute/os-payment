@@ -77,6 +77,11 @@ jobs:
       TF_VAR_environment: ${{ github.ref_name }}
       TF_VAR_aws_account_id: ${{ github.ref_name == 'main' && secrets.AWS_ACCOUNT_ID_MAIN || secrets.AWS_ACCOUNT_ID_DEVELOP }}
       TF_STATE_BUCKET: ${{ github.ref_name == 'main' && secrets.TF_STATE_BUCKET_MAIN || secrets.TF_STATE_BUCKET_DEVELOP }}
+      # Datadog: without the DD_API_KEY secret the worker deploys without the Agent,
+      # tracer and FireLens (same switch as the os-management Agent). The site
+      # defaults to US1 (datadoghq.com); the DD_SITE repository variable overrides it.
+      TF_VAR_datadog_api_key: ${{ secrets.DD_API_KEY }}
+      TF_VAR_datadog_site: ${{ vars.DD_SITE || 'datadoghq.com' }}
       ECR_REPOSITORY: os-payment-${{ github.ref_name }}
       ECS_CLUSTER: os-payment-${{ github.ref_name }}
       ECS_SERVICE: os-payment-${{ github.ref_name }}

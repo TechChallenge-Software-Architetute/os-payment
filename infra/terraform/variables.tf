@@ -119,3 +119,34 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+# --- Datadog -----------------------------------------------------------------
+
+variable "datadog_api_key" {
+  description = <<-EOT
+    Datadog API key. Empty (the default) deploys the worker without Datadog: no
+    sidecars, no secret and no tracer. CI passes the DD_API_KEY repository secret,
+    the same key os-management uses for its Agent.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "datadog_site" {
+  description = "Datadog site of the account that receives the data (US1 by default)."
+  type        = string
+  default     = "datadoghq.com"
+}
+
+variable "datadog_agent_image" {
+  description = "Datadog Agent image for the Fargate sidecar."
+  type        = string
+  default     = "public.ecr.aws/datadog/agent:latest"
+}
+
+variable "fluent_bit_image" {
+  description = "AWS for Fluent Bit image used as the FireLens log router."
+  type        = string
+  default     = "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable"
+}
