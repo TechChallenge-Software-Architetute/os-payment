@@ -47,8 +47,90 @@ Secrets usados no GitHub Actions:
 - Os equivalentes `_MAIN` para o ambiente `main`.
 - `AWS_REGION` (opcional; padrão `us-east-1`).
 - `MERCADO_PAGO_ACCESS_TOKEN`.
+- `DD_API_KEY` (opcional; liga o Datadog — ver [Observabilidade](#observabilidade-datadog)).
+
+Variável de repositório opcional: `DD_SITE` (padrão `datadoghq.com`).
 
 O bucket S3 do state deve existir antes do deploy. O backend usa o lockfile nativo do S3 (`use_lockfile=true`); não requer tabela DynamoDB para locking.
+
+## Observabilidade (Datadog)
+
+Segue o modelo recomendado pelo Datadog para ECS Fargate. Com o secret `DD_API_KEY`
+configurado, a task passa a ter três containers:
+
+| Container | Papel |
+| --- | --- |
+| `os-payment` | O worker, com o `dd-java-agent` carregado por `JAVA_TOOL_OPTIONS`. Os logs saem por FireLens direto para o Datadog. |
+| `datadog-agent` | Recebe os traces em `localhost:8126` e coleta as métricas dos containers (`ECS_FARGATE=true`). Não é essencial: se parar, o worker continua. |
+| `log-router` | Fluent Bit (FireLens) que envia o stdout do worker para o Datadog. Os logs dele mesmo ficam no CloudWatch. |
+
+- **Liga/desliga:** sem `DD_API_KEY`, a task sobe exatamente como antes: só o
+  worker, com logs no CloudWatch e sem tracer. É o mesmo comportamento do Agent
+  no `os-management`.
+- **Tracer:** o `Dockerfile` baixa o `dd-java-agent.jar` para `/app`, mas ele só é
+  carregado quando a task define `JAVA_TOOL_OPTIONS`. Rodando localmente ou no
+  Compose, o jar fica inerte.
+- **API key:** fica no Secrets Manager (`os-payment-<environment>-datadog-api-key`).
+  O ECS injeta a chave no Agent e no FireLens pela execution role, que tem leitura
+  só nesse secret.
+- **Tags:** `DD_SERVICE=os-payment`; `DD_ENV` com o mesmo mapeamento do
+  `os-management` (`main` → `production`, `develop` → `homolog`, outras →
+  `developer`); `DD_VERSION` = SHA do commit (a tag da imagem).
+- **Tamanho da task:** com Datadog, sobe para no mínimo 0,5 vCPU / 1 GB. O worker
+  fica limitado a 640 MB, para a JVM não reservar a memória dos sidecars.
+
+### Como validar
+
+1. Faça o deploy na `develop` com o secret `DD_API_KEY` configurado. No fim do
+   `terraform apply`, o output `datadog_enabled` tem que ser `true`.
+2. No console do ECS, a task do serviço `os-payment-develop` tem que mostrar os
+   três containers em execução.
+3. Envie um pedido de pagamento para a fila de entrada:
+
+   ```bash
+   QUEUE_URL=$(aws sqs get-queue-url --queue-name os-payment-develop-payment-requests --query QueueUrl --output text)
+   aws sqs send-message --queue-url "$QUEUE_URL" \
+     --message-body '{"order":"teste-datadog","amount":10.0,"correlationId":"teste-datadog"}'
+   ```
+
+4. No Datadog, filtre por `service:os-payment env:homolog`:
+   - **APM:** o serviço `os-payment`, com os spans do SQS, do DynamoDB, da
+     chamada HTTP ao Mercado Pago e da publicação na fila de saída. Como o
+     listener do Spring Cloud AWS é assíncrono, confira se o processamento de uma
+     mensagem aparece num trace único ou dividido;
+   - **Logs:** as linhas do worker, com `correlationId` e `order`;
+   - **Infrastructure → Containers:** os três containers da task.
+
+### Teste local (sem AWS)
+
+O script `datadog/test-local.sh` sobe o `docker-compose.yml` (LocalStack + worker)
+junto com o `datadog/docker-compose.datadog.yml`, que acrescenta um Datadog Agent e
+liga o tracer no worker pelo mesmo `JAVA_TOOL_OPTIONS` da task do ECS. Os dados
+chegam ao Datadog com `service:os-payment env:developer`.
+
+Requer Docker rodando e uma API key do Datadog (pode ser de uma conta de trial).
+A chave pode ser exportada no terminal ou colocada no `.env`, que não vai para o
+git. No Git Bash, na raiz do repositório:
+
+```bash
+export DD_API_KEY=...          # ou DD_API_KEY=... no .env
+export DD_SITE=datadoghq.com   # padrão; troque se a conta for de outro site
+bash datadog/test-local.sh up          # build, LocalStack, Agent e worker + verificações
+bash datadog/test-local.sh traffic 5   # 5 pedidos de pagamento na fila (padrão 3) + links do Datadog
+bash datadog/test-local.sh down        # derruba tudo
+```
+
+No fim do `up` tem que aparecer `OK dd-java-agent carregado` e a API key como
+válida. Sem `MERCADO_PAGO_ACCESS_TOKEN` no `.env`, a chamada ao Mercado Pago
+falha, mas o trace e os logs do erro aparecem no Datadog do mesmo jeito.
+
+Aqui o Agent coleta os logs pelo Docker. O FireLens e o tamanho da task só existem
+no ECS e são validados no deploy.
+
+**Propagação pelo SQS:** quem publica na fila com o tracer do Datadog grava o
+contexto no atributo `_datadog`. O consumidor aqui também roda com o tracer, então
+o trace pode aparecer ligado ao do produtor. Isso depende do produtor
+(`os-orchestrator`) também estar instrumentado.
 
 ## Testes
 

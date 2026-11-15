@@ -141,6 +141,154 @@ resource "aws_dynamodb_table" "payment_orders" {
   }
 }
 
+# --- Datadog -----------------------------------------------------------------
+
+locals {
+  # Datadog is on only when an API key is provided, the same switch the
+  # os-management pipeline uses for its Agent. nonsensitive() is required because
+  # count cannot depend on a sensitive value; it exposes only whether the key is
+  # set, never the key itself.
+  datadog_enabled = nonsensitive(var.datadog_api_key != "")
+
+  # Same branch-to-env mapping as os-management, so the env filter in Datadog
+  # shows every service of the saga together.
+  datadog_env = lookup({ main = "production", develop = "homolog" }, var.environment, "developer")
+
+  datadog_secret_arn = try(aws_secretsmanager_secret.datadog_api_key[0].arn, "")
+
+  # JAVA_TOOL_OPTIONS loads the dd-java-agent baked into the image. Without it
+  # (local runs, Datadog off) the jar stays inert. The tracer reaches the Agent on
+  # localhost:8126, since containers of a Fargate task share the network.
+  datadog_tracer_environment = [
+    { name = "JAVA_TOOL_OPTIONS", value = "-javaagent:/app/dd-java-agent.jar" },
+    { name = "DD_SERVICE", value = var.app_name },
+    { name = "DD_ENV", value = local.datadog_env },
+    { name = "DD_VERSION", value = var.image_tag },
+    { name = "DD_LOGS_INJECTION", value = "true" },
+  ]
+
+  # Worker with the tracer on and its stdout routed to Datadog through FireLens.
+  # The memory limit keeps the JVM (MaxRAMPercentage=75) from sizing its heap over
+  # the sidecars' share of the task.
+  datadog_worker_container = {
+    name        = var.app_name
+    image       = local.worker_image
+    essential   = true
+    memory      = local.task_memory - 384
+    environment = concat(local.worker_environment, local.datadog_tracer_environment)
+    dependsOn   = [{ containerName = "log-router", condition = "START" }]
+    dockerLabels = {
+      "com.datadoghq.tags.service" = var.app_name
+      "com.datadoghq.tags.env"     = local.datadog_env
+      "com.datadoghq.tags.version" = var.image_tag
+    }
+    logConfiguration = {
+      logDriver = "awsfirelens"
+      options = {
+        Name           = "datadog"
+        Host           = "http-intake.logs.${var.datadog_site}"
+        TLS            = "on"
+        provider       = "ecs"
+        dd_service     = var.app_name
+        dd_source      = "java"
+        dd_message_key = "log"
+        dd_tags        = "env:${local.datadog_env},version:${var.image_tag}"
+      }
+      secretOptions = [{ name = "apikey", valueFrom = local.datadog_secret_arn }]
+    }
+  }
+
+  # Receives traces from the tracer and collects the task's container metrics.
+  # Not essential: if it stops, the worker keeps processing payments.
+  datadog_agent_container = {
+    name              = "datadog-agent"
+    image             = var.datadog_agent_image
+    essential         = false
+    memoryReservation = 256
+    environment = [
+      { name = "ECS_FARGATE", value = "true" },
+      { name = "DD_SITE", value = var.datadog_site },
+      { name = "DD_ENV", value = local.datadog_env },
+      { name = "DD_APM_ENABLED", value = "true" },
+    ]
+    secrets = [{ name = "DD_API_KEY", valueFrom = local.datadog_secret_arn }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.app.name
+        "awslogs-region"        = var.region
+        "awslogs-stream-prefix" = "datadog-agent"
+      }
+    }
+  }
+
+  # FireLens log router (Fluent Bit). Its own logs stay in CloudWatch, so a
+  # delivery problem to Datadog can still be investigated.
+  datadog_log_router_container = {
+    name              = "log-router"
+    image             = var.fluent_bit_image
+    essential         = true
+    memoryReservation = 64
+    firelensConfiguration = {
+      type    = "fluentbit"
+      options = { "enable-ecs-log-metadata" = "true" }
+    }
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.app.name
+        "awslogs-region"        = var.region
+        "awslogs-stream-prefix" = "log-router"
+      }
+    }
+  }
+
+  datadog_containers = [
+    local.datadog_worker_container,
+    local.datadog_agent_container,
+    local.datadog_log_router_container,
+  ]
+}
+
+# The API key lives in Secrets Manager rather than in the task definition: ECS
+# injects it into the Agent (secrets) and into FireLens (secretOptions) at task
+# start. Created only when a key is provided.
+resource "aws_secretsmanager_secret" "datadog_api_key" {
+  count = local.datadog_enabled ? 1 : 0
+
+  name        = "${local.app_name}-datadog-api-key"
+  description = "Datadog API key used by the os-payment ECS task (Agent and FireLens)."
+
+  # Immediate deletion, so a destroy followed by a new deploy can reuse the name.
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "datadog_api_key" {
+  count = local.datadog_enabled ? 1 : 0
+
+  secret_id     = aws_secretsmanager_secret.datadog_api_key[0].id
+  secret_string = var.datadog_api_key
+}
+
+# ECS resolves `secrets` and `secretOptions` with the execution role, not the task
+# role, so the read permission goes there, scoped to this one secret.
+data "aws_iam_policy_document" "execution_datadog" {
+  count = local.datadog_enabled ? 1 : 0
+
+  statement {
+    sid       = "ReadDatadogApiKey"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.datadog_api_key[0].arn]
+  }
+}
+
+resource "aws_iam_role_policy" "execution_datadog" {
+  count  = local.datadog_enabled ? 1 : 0
+  name   = "${local.app_name}-datadog-secret"
+  role   = aws_iam_role.execution.id
+  policy = data.aws_iam_policy_document.execution_datadog[0].json
+}
+
 # --- ECR and ECS Fargate worker ---------------------------------------------
 
 resource "aws_ecr_repository" "app" {
@@ -229,28 +377,31 @@ resource "aws_security_group" "tasks" {
   }
 }
 
-resource "aws_ecs_task_definition" "app" {
-  family                   = local.app_name
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = tostring(var.task_cpu)
-  memory                   = tostring(var.task_memory)
-  execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.task.arn
+locals {
+  worker_image = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
 
-  container_definitions = jsonencode([{
-    name      = var.app_name
-    image     = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
-    essential = true
-    environment = [
-      { name = "AWS_REGION", value = var.region },
-      { name = "SQS_INPUT_QUEUE", value = aws_sqs_queue.input.name },
-      { name = "SQS_OUTPUT_QUEUE", value = aws_sqs_queue.output.name },
-      { name = "DYNAMODB_PAYMENT_ORDERS_TABLE", value = aws_dynamodb_table.payment_orders.name },
-      { name = "PAYMENT_POLLING_FIXED_DELAY_MS", value = tostring(var.payment_polling_fixed_delay_ms) },
-      { name = "PAYMENT_POLLING_BATCH_SIZE", value = tostring(var.payment_polling_batch_size) },
-      { name = "MERCADO_PAGO_API_URL", value = var.mercado_pago_api_url },
-    ]
+  # The Datadog Agent and the log router need room next to the JVM; the smallest
+  # Fargate size that fits the three containers is 0.5 vCPU / 1 GB.
+  task_cpu    = local.datadog_enabled ? max(var.task_cpu, 512) : var.task_cpu
+  task_memory = local.datadog_enabled ? max(var.task_memory, 1024) : var.task_memory
+
+  # Shared by both container definitions (with and without Datadog).
+  worker_environment = [
+    { name = "AWS_REGION", value = var.region },
+    { name = "SQS_INPUT_QUEUE", value = aws_sqs_queue.input.name },
+    { name = "SQS_OUTPUT_QUEUE", value = aws_sqs_queue.output.name },
+    { name = "DYNAMODB_PAYMENT_ORDERS_TABLE", value = aws_dynamodb_table.payment_orders.name },
+    { name = "PAYMENT_POLLING_FIXED_DELAY_MS", value = tostring(var.payment_polling_fixed_delay_ms) },
+    { name = "PAYMENT_POLLING_BATCH_SIZE", value = tostring(var.payment_polling_batch_size) },
+    { name = "MERCADO_PAGO_API_URL", value = var.mercado_pago_api_url },
+  ]
+
+  # Worker alone, as before Datadog.
+  worker_container = {
+    name        = var.app_name
+    image       = local.worker_image
+    essential   = true
+    environment = local.worker_environment
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -259,7 +410,21 @@ resource "aws_ecs_task_definition" "app" {
         "awslogs-stream-prefix" = "worker"
       }
     }
-  }])
+  }
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                   = local.app_name
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = tostring(local.task_cpu)
+  memory                   = tostring(local.task_memory)
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  # Each branch is encoded to JSON on its own, so the two never need a common
+  # type: the worker alone, or the worker plus the Datadog sidecars.
+  container_definitions = local.datadog_enabled ? jsonencode(local.datadog_containers) : jsonencode([local.worker_container])
 }
 
 resource "aws_ecs_service" "app" {
@@ -275,9 +440,12 @@ resource "aws_ecs_service" "app" {
     assign_public_ip = true
   }
 
+  # With Datadog off these two lists have no instances and add no dependency.
   depends_on = [
     aws_iam_role_policy_attachment.execution,
     aws_iam_role_policy.task,
+    aws_iam_role_policy.execution_datadog,
+    aws_secretsmanager_secret_version.datadog_api_key,
   ]
 
   # The workflow registers a task-definition revision with the Mercado Pago

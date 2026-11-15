@@ -47,3 +47,8 @@ output "ecs_service_name" {
   description = "ECS service running the payment worker."
   value       = aws_ecs_service.app.name
 }
+
+output "datadog_enabled" {
+  description = "Whether the task runs with the Datadog Agent, tracer and FireLens (true when an API key was provided)."
+  value       = local.datadog_enabled
+}

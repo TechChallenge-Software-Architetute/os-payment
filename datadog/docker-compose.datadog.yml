@@ -1,0 +1,50 @@
+# Datadog no ambiente local do os-payment. Soma-se ao docker-compose.yml da raiz:
+#
+#   docker compose -f docker-compose.yml -f datadog/docker-compose.datadog.yml up -d --build
+#
+# ou, mais simples, pelo script datadog/test-local.sh.
+#
+# Reproduz localmente o que a task do ECS faz na AWS: o worker sobe com o
+# dd-java-agent (já embutido na imagem) e envia traces para um Datadog Agent; os
+# logs do worker são coletados pelo Agent. A diferença é que, aqui, o Agent lê os
+# logs pelo Docker em vez de usar o FireLens.
+
+services:
+  datadog-agent:
+    image: public.ecr.aws/datadog/agent:latest
+    environment:
+      DD_API_KEY: ${DD_API_KEY:-}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_ENV: ${DD_ENV:-developer}
+      # No Docker Desktop o Agent nem sempre descobre o hostname sozinho.
+      DD_HOSTNAME: ${DD_HOSTNAME:-os-payment-local}
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_LOGS_ENABLED: "true"
+      # Coleta só os containers com a label com.datadoghq.ad.logs (o worker),
+      # não o LocalStack nem o próprio Agent.
+      DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "false"
+      DD_PROCESS_AGENT_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+
+  payment:
+    depends_on:
+      datadog-agent: {condition: service_started}
+    environment:
+      # Mesmo mecanismo da task do ECS: o jar está na imagem e só é carregado
+      # quando JAVA_TOOL_OPTIONS aponta para ele.
+      JAVA_TOOL_OPTIONS: -javaagent:/app/dd-java-agent.jar
+      DD_AGENT_HOST: datadog-agent
+      DD_SERVICE: os-payment
+      DD_ENV: ${DD_ENV:-developer}
+      DD_VERSION: ${DD_VERSION:-local}
+      DD_LOGS_INJECTION: "true"
+    labels:
+      com.datadoghq.ad.logs: '[{"source":"java","service":"os-payment"}]'
+      com.datadoghq.tags.service: os-payment
+      com.datadoghq.tags.env: ${DD_ENV:-developer}
+      com.datadoghq.tags.version: ${DD_VERSION:-local}
