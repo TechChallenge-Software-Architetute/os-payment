@@ -9,7 +9,7 @@
 #
 # Uso (Git Bash, na raiz do repositório):
 #   export DD_API_KEY=<api key>        # ou DD_API_KEY=... no arquivo .env (ignorado pelo git)
-#   export DD_SITE=datadoghq.eu        # opcional; padrão datadoghq.com (US1)
+#   export DD_SITE=datadoghq.com        # opcional; padrão datadoghq.com (US1)
 #   bash datadog/test-local.sh up          # build, LocalStack, Agent e worker + verificações
 #   bash datadog/test-local.sh traffic 5   # envia 5 pedidos de pagamento para a fila (padrão 3)
 #   bash datadog/test-local.sh check       # repete as verificações
