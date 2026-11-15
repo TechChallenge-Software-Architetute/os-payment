@@ -4,7 +4,8 @@ services:
     environment:
       SERVICES: sqs,dynamodb
       AWS_DEFAULT_REGION: ${AWS_REGION:-eu-west-3}
-    ports: ["4566:4566"]
+    # Keep payment's LocalStack separate from the shared LocalStack on host port 4566.
+    ports: ["${LOCALSTACK_PORT:-4567}:4566"]
   queue-init:
     image: amazon/aws-cli:2.15.57
     depends_on: [localstack]
@@ -50,4 +51,4 @@ services:
       PAYMENT_POLLING_BATCH_SIZE: ${PAYMENT_POLLING_BATCH_SIZE:-50}
       MERCADO_PAGO_ACCESS_TOKEN: ${MERCADO_PAGO_ACCESS_TOKEN:-}
       MERCADO_PAGO_API_URL: ${MERCADO_PAGO_API_URL:-https://api.mercadopago.com}
-    ports: ["8080:8080"]
+    ports: ["${PAYMENT_PORT:-8081}:8080"]

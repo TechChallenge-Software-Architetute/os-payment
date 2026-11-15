@@ -7,10 +7,10 @@ spring:
         access-key: test
         secret-key: test
       sqs:
-        endpoint: ${SQS_ENDPOINT:http://localhost:4566}
+        endpoint: ${SQS_ENDPOINT:http://localhost:4567}
 app:
   dynamodb:
-    endpoint: ${DYNAMODB_ENDPOINT:http://localhost:4566}
+    endpoint: ${DYNAMODB_ENDPOINT:http://localhost:4567}
     payment-orders-table: ${DYNAMODB_PAYMENT_ORDERS_TABLE:payment_orders}
   sqs:
     input-queue: ${SQS_INPUT_QUEUE:sqs-os-management}
