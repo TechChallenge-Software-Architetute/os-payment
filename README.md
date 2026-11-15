@@ -1,75 +1,59 @@
 # os-payment
 
-Pagamentos da saga de ordens de serviço. Consome a fila de requisições de
-pagamento e registra cada requisição no DynamoDB.
+Worker Spring Boot que consome pedidos de pagamento do SQS, cria preferências no Mercado Pago, registra o pedido no DynamoDB, consulta pagamentos pendentes periodicamente e publica ações na fila de saída. Não disponibiliza endpoints REST.
 
-> **Estado atual: infraestrutura + handler placeholder.** As regras de negócio de
-> pagamento e o contrato de mensagem com o `os-orchestrator` ainda não foram
-> definidos. O handler persiste a requisição e para aí — de propósito, ele **não**
-> publica resultado de volta para o orquestrador, porque inventar esse formato
-> agora amarraria a saga a um contrato que ninguém acordou.
+## Fluxo e contrato
 
----
+- Entrada: `order`, `amount` e `correlationId` (opcional; o serviço gera um UUID quando ausente).
+- Moeda fixa: `BRL`. O serviço não recebe email nem detalhes dos itens.
+- Saída: `order`, `correlationId`, `action`, `amount`, `currency`, `paymentId`, `checkoutUrl`, `errorCode`, `errorMessage` e `occurredAt`.
+- Ações: `ORDER_GENERATED`, `EXECUTAR_SERVICO` e `NEGAR_SERVICO`.
+- O polling consulta o Mercado Pago e publica a transição final na fila de saída.
 
-## Infraestrutura (`infra/terraform`)
+## Infraestrutura AWS
 
-Este repositório cria **apenas o que é seu**:
+`infra/terraform` provisiona os recursos usados pelo worker:
 
-| Recurso | Nome |
-|---|---|
-| Fila de entrada | `os-payment-<env>-payment-requests` |
-| DLQ (redrive, maxReceiveCount 5) | `os-payment-<env>-payment-requests-dlq` |
-| Tabela de pagamentos | `os-payment-<env>-payments` |
-| Lambda consumidora | `os-payment-<env>-payment-handler` |
+| Recurso | Nome padrão |
+| --- | --- |
+| Fila de entrada | `os-payment-<environment>-payment-requests` |
+| DLQ de entrada | `os-payment-<environment>-payment-requests-dlq` |
+| Fila de saída | `os-payment-<environment>-payment-status` |
+| Tabela de ordens | `os-payment-<environment>-payment-orders` |
+| Repositório ECR | `os-payment-<environment>` |
+| Cluster e serviço ECS | `os-payment-<environment>` |
 
-`<env>` é o nome da branch (`develop`/`main`).
+A tabela DynamoDB usa `order` como chave de partição e o índice `action-updatedAt-index` para localizar pagamentos pendentes. O task role tem acesso às filas e à tabela. O token do Mercado Pago é injetado no task definition pelo GitHub Actions e não é armazenado no state do Terraform.
 
-Tabela: PK `paymentId` (S), GSI `orderId-index` em `orderId` (a saga busca por
-ordem, não por pagamento), `PAY_PER_REQUEST`.
+O Terraform também remove a infraestrutura Lambda antiga. Ao aplicar a mudança sobre um state que já criou esses recursos, revise o plano: ele deve remover a Lambda e a tabela `os-payment-<environment>-payments` legada. A tabela nova `payment-orders` permanece e não é substituída. A fila de entrada e sua DLQ são migradas com blocos `moved`, preservando-as.
 
-### Deploy independente
+## Execução local
 
-Nenhum `terraform_remote_state` e nenhum recurso criado dentro do stack de outro
-repositório. O `aws_lambda_event_source_mapping` aponta para a fila **deste**
-repositório, então não é dependência cruzada — um mapping na fila de outro
-serviço seria, e por isso não existe aqui.
-
-Filas de terceiros são endereçadas por nome determinístico
-(`os-<serviço>-<env>-<propósito>`), então este deploy roda em qualquer ordem,
-inclusive primeiro, em conta vazia.
-
-O `os-orchestrator` recebe permissão de `sqs:SendMessage` pela própria policy IAM
-dele — por isso `producer_role_arns` vem vazio por padrão e nenhuma resource
-policy é criada. Preencha somente para produtores em outra conta.
-
----
-
-## Build
+Copie `.env.example` para `.env`, preencha `MERCADO_PAGO_ACCESS_TOKEN` com um token de teste e inicie o ambiente:
 
 ```bash
-./mvnw -B clean package
+docker compose up --build
 ```
 
-Gera o fat jar `target/os-payment.jar`, que é o artefato que o Terraform envia
-para a Lambda (`filename` + `source_code_hash`). O jar é construído no mesmo job
-do deploy, como em `os-management-lambda`.
+O Compose inicia LocalStack com as filas e a tabela locais. Para executar pelo IntelliJ, inicie a infraestrutura com `docker compose up -d queue-init` e defina `SPRING_PROFILES_ACTIVE=local` na Run/Debug Configuration. O perfil local aponta para `http://localhost:4566`, usa região `eu-west-3`, credenciais `test/test` e tabela `payment_orders`. O `.env` não é carregado automaticamente pelo IntelliJ; configure `MERCADO_PAGO_ACCESS_TOKEN` na Run Configuration se for testar checkout.
 
-## Variáveis de ambiente da Lambda
+## Deploy
 
-| Variável | Origem |
-|---|---|
-| `PAYMENTS_TABLE` | injetada pelo Terraform |
+O workflow `.github/workflows/pipeline.yml` executa os testes, valida o Terraform, constrói e publica a imagem no ECR e aplica os recursos ECS. Depois injeta `MERCADO_PAGO_ACCESS_TOKEN` a partir do GitHub Secret e reinicia o serviço. O `task_definition` gerido manualmente pelo workflow fica preservado nas próximas aplicações do Terraform.
 
-Credenciais e região vêm do default provider chain (a execution role). Não há
-endpoint override nem credencial fixa no código.
+Secrets usados no GitHub Actions:
 
-## Segurança
+- `AWS_ACCOUNT_ID_DEVELOP`, `AWS_ACCESS_KEY_ID_DEVELOP`, `AWS_SECRET_ACCESS_KEY_DEVELOP` e `TF_STATE_BUCKET_DEVELOP`.
+- Os equivalentes `_MAIN` para o ambiente `main`.
+- `AWS_REGION` (opcional; padrão `us-east-1`).
+- `MERCADO_PAGO_ACCESS_TOKEN`.
 
-- Policy da Lambda restrita: só esta fila, só esta tabela, só as ações que o
-  handler executa (`ReceiveMessage`/`DeleteMessage`/`GetQueueAttributes`,
-  `PutItem`). Sem VPC — a função só fala com SQS e DynamoDB pela API da AWS.
-- SSE-SQS, encryption-at-rest e PITR habilitados.
-- Log group criado explicitamente com retenção de 14 dias; sem isso a Lambda cria
-  o grupo com retenção "never expire".
-- `visibility_timeout` da fila = 6x o timeout da função, para o SQS não
-  reentregar mensagem ainda em processamento.
+O bucket S3 do state deve existir antes do deploy. O backend usa o lockfile nativo do S3 (`use_lockfile=true`); não requer tabela DynamoDB para locking.
+
+## Testes
+
+Os cenários BDD em `src/test/resources/features` rodam com:
+
+```bash
+./mvnw -B test
+```

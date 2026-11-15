@@ -1,38 +1,49 @@
-# Producers (os-orchestrator) do NOT read these via terraform_remote_state. They
-# rebuild the queue name from os-<service>-<env>-<purpose>, which is what keeps
-# the deploys independent.
-
-output "payment_requests_queue_name" {
-  description = "Name of the inbound payment-requests queue."
-  value       = aws_sqs_queue.payment_requests.name
+output "input_queue_name" {
+  description = "Input queue name the producer should send payment requests to."
+  value       = aws_sqs_queue.input.name
 }
 
-output "payment_requests_queue_url" {
-  description = "URL of the inbound payment-requests queue."
-  value       = aws_sqs_queue.payment_requests.url
+output "input_queue_url" {
+  description = "Input queue URL."
+  value       = aws_sqs_queue.input.url
 }
 
-output "payment_requests_queue_arn" {
-  description = "ARN of the inbound payment-requests queue. Producers grant sqs:SendMessage on this in their own IAM policy."
-  value       = aws_sqs_queue.payment_requests.arn
+output "input_queue_arn" {
+  description = "Input queue ARN for producer IAM policies."
+  value       = aws_sqs_queue.input.arn
 }
 
-output "payment_requests_dlq_url" {
-  description = "URL of the payment-requests dead-letter queue."
-  value       = aws_sqs_queue.payment_requests_dlq.url
+output "input_dlq_url" {
+  description = "Input dead-letter queue URL."
+  value       = aws_sqs_queue.input_dlq.url
 }
 
-output "payments_table_name" {
-  description = "DynamoDB table holding payment records."
-  value       = aws_dynamodb_table.payments.name
+output "output_queue_name" {
+  description = "Queue name receiving payment actions."
+  value       = aws_sqs_queue.output.name
 }
 
-output "payments_table_arn" {
-  description = "ARN of the payments table."
-  value       = aws_dynamodb_table.payments.arn
+output "output_queue_url" {
+  description = "Queue URL receiving payment actions."
+  value       = aws_sqs_queue.output.url
 }
 
-output "payment_handler_function_name" {
-  description = "Name of the payment handler Lambda."
-  value       = aws_lambda_function.payment_handler.function_name
+output "payment_orders_table_name" {
+  description = "DynamoDB table name used by the worker, keyed by order with the action-updatedAt-index GSI."
+  value       = aws_dynamodb_table.payment_orders.name
+}
+
+output "ecr_repository_url" {
+  description = "ECR repository URL for the payment worker image."
+  value       = aws_ecr_repository.app.repository_url
+}
+
+output "ecs_cluster_name" {
+  description = "ECS cluster running the payment worker."
+  value       = aws_ecs_cluster.app.name
+}
+
+output "ecs_service_name" {
+  description = "ECS service running the payment worker."
+  value       = aws_ecs_service.app.name
 }

@@ -11,6 +11,13 @@
 .mtj.tmp/
 
 # Package Files #
+target/
+.env
+.env.*
+!.env.example
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
 *.jar
 *.war
 *.nar
@@ -43,3 +50,8 @@ override.tf.json
 *_override.tf.json
 # Saved plans.
 tfplan
+
+# IntelliJ
+.idea/
+*.iml
+target/

@@ -1,0 +1,17 @@
+spring:
+  cloud:
+    aws:
+      region:
+        static: eu-west-3
+      credentials:
+        access-key: test
+        secret-key: test
+      sqs:
+        endpoint: ${SQS_ENDPOINT:http://localhost:4566}
+app:
+  dynamodb:
+    endpoint: ${DYNAMODB_ENDPOINT:http://localhost:4566}
+    payment-orders-table: ${DYNAMODB_PAYMENT_ORDERS_TABLE:payment_orders}
+  sqs:
+    input-queue: ${SQS_INPUT_QUEUE:sqs-os-management}
+    output-queue: ${SQS_OUTPUT_QUEUE:sqs-payment}
