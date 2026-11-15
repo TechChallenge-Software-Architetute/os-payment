@@ -35,7 +35,7 @@ Copie `.env.example` para `.env`, preencha `MERCADO_PAGO_ACCESS_TOKEN` com um to
 docker compose up --build
 ```
 
-O Compose inicia LocalStack com as filas e a tabela locais. Para executar pelo IntelliJ, inicie a infraestrutura com `docker compose up -d queue-init` e defina `SPRING_PROFILES_ACTIVE=local` na Run/Debug Configuration. O perfil local aponta para `http://localhost:4566`, usa região `eu-west-3`, credenciais `test/test` e tabela `payment_orders`. O `.env` não é carregado automaticamente pelo IntelliJ; configure `MERCADO_PAGO_ACCESS_TOKEN` na Run Configuration se for testar checkout.
+O Compose inicia LocalStack com as filas e a tabela locais, publicando-o na porta `4567` do host para coexistir com outros ambientes que usam `4566`. Os serviços do Compose acessam o endpoint pela rede interna em `http://localstack:4566`. O serviço payment publica a porta `8080` do contêiner na porta `8081` do host; altere-a com `PAYMENT_PORT` se necessário. Para executar pelo IntelliJ, inicie a infraestrutura com `docker compose up -d queue-init` e defina `SPRING_PROFILES_ACTIVE=local` na Run/Debug Configuration. O perfil local aponta para `http://localhost:4567`, usa região `eu-west-3`, credenciais `test/test` e tabela `payment_orders`. A porta pode ser alterada pela variável `LOCALSTACK_PORT`. O `.env` não é carregado automaticamente pelo IntelliJ; configure `MERCADO_PAGO_ACCESS_TOKEN` na Run Configuration se for testar checkout.
 
 ## Deploy
 
