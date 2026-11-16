@@ -11,6 +11,13 @@
 .mtj.tmp/
 
 # Package Files #
+target/
+.env
+.env.*
+!.env.example
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
 *.jar
 *.war
 *.nar
@@ -22,3 +29,29 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+### Maven ###
+target/
+
+### Terraform ###
+# Provider plugin cache — large binaries, re-downloaded by `terraform init`.
+**/.terraform/*
+# Local state must never be committed; CI uses the S3 backend.
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+# Variable files may hold credentials.
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Saved plans.
+tfplan
+
+# IntelliJ
+.idea/
+*.iml
+target/

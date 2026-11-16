@@ -1,0 +1,19 @@
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                      http://maven.apache.org/xsd/settings-1.0.0.xsd">
+    <!--
+        Credencial do GitHub Packages, usada apenas pelo job `publish` (hoje
+        comentado em .github/workflows/pipeline.yml). Inerte enquanto nenhum
+        `mvn deploy` roda. Mesmo formato do os-management: nenhum valor de
+        credencial no arquivo, só a referência à variável de ambiente que o
+        Actions injeta a partir do GITHUB_TOKEN.
+    -->
+    <servers>
+        <server>
+            <id>github</id>
+            <username>x-access-token</username>
+            <password>${env.GITHUB_TOKEN}</password>
+        </server>
+    </servers>
+</settings>
